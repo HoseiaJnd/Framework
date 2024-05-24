@@ -1,20 +1,27 @@
 package com.controller;
 
-import com.annotation.AnnotationController;
+import com.annotation.Annotation;
+import com.annotation.GET;
+import com.mapping.Mapping;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.List;
+import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 
 public class FrontController extends HttpServlet {
-    
-    private boolean checked = false;
-    private List<Class<?>> controllerClasses = new ArrayList<>();
+
+    private Map<String, Mapping> urlMappings = new HashMap<>();
+
+    @Override
+    public void init() throws ServletException {
+        findControllerClasses();
+    }
 
     public void findControllerClasses() {
         String controllerPackage = getServletConfig().getInitParameter("controller");
@@ -32,7 +39,6 @@ public class FrontController extends HttpServlet {
         }
 
         findClassesInDirectory(controllerPackage, directory);
-        checked = true;
     }
 
     private void findClassesInDirectory(String packageName, File directory) {
@@ -49,8 +55,14 @@ public class FrontController extends HttpServlet {
     private void addClassIfController(String className) {
         try {
             Class<?> clazz = Class.forName(className);
-            if (clazz.isAnnotationPresent(AnnotationController.class)) {
-                controllerClasses.add(clazz);
+            if (clazz.isAnnotationPresent(Annotation.class)) {
+                for (Method method : clazz.getDeclaredMethods()) {
+                    if (method.isAnnotationPresent(GET.class)) {
+                        GET getAnnotation = method.getAnnotation(GET.class);
+                        Mapping mapping = new Mapping(clazz.getName(), method.getName());
+                        urlMappings.put(getAnnotation.value(), mapping);
+                    }
+                }
             }
         } catch (ClassNotFoundException e) {
             System.err.println("Class not found: " + className);
@@ -61,15 +73,17 @@ public class FrontController extends HttpServlet {
         PrintWriter out = res.getWriter();
         try {
             String url = req.getRequestURL().toString();
+            String contextPath = req.getContextPath();
+            String path = url.substring(url.indexOf(contextPath) + contextPath.length());
+
             out.println("URL: " + url);
+            out.println("Path: " + path);
 
-            if (!checked) {
-                findControllerClasses();
-            }
-
-            out.println("Liste des classes controleurs :");
-            for (Class<?> controllerClass : controllerClasses) {
-                out.println(controllerClass.getName());
+            Mapping mapping = urlMappings.get(path);
+            if (mapping != null) {
+                out.println("Mapping trouvé : " + mapping);
+            } else {
+                out.println("Aucune méthode associée à ce chemin");
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -77,10 +91,12 @@ public class FrontController extends HttpServlet {
         }
     }
 
+    @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequested(req, res);
     }
 
+    @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequested(req, res);
     }
