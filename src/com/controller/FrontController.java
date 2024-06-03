@@ -3,6 +3,7 @@ package com.controller;
 import com.annotation.Annotation;
 import com.annotation.GET;
 import com.mapping.Mapping;
+import com.mapping.ModelView;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 
@@ -69,7 +70,7 @@ public class FrontController extends HttpServlet {
         }
     }
 
-    protected void processRequested(HttpServletRequest req, HttpServletResponse res) throws IOException {
+    protected void processRequested(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
         PrintWriter out = res.getWriter();
         try {
             String url = req.getRequestURL().toString();
@@ -91,12 +92,28 @@ public class FrontController extends HttpServlet {
                 Object instance = clazz.getDeclaredConstructor().newInstance();
 
                 // Invoquer la méthode sur l'instance
-                String result = (String) method.invoke(instance);
+                Object result = method.invoke(instance);
 
-                // Afficher la valeur retournée par la méthode
-                out.println("Résultat de la méthode : " + result);
+                if (result instanceof String) {
+                    out.println("Résultat de la méthode : " + result);
+                } else if (result instanceof ModelView) {
+                    ModelView modelView = (ModelView) result;
+                    String viewUrl = modelView.getUrl();
+                    Map<String, Object> data = modelView.getData();
+
+                    // Boucle sur les données pour les mettre dans la requête
+                    for (Map.Entry<String, Object> entry : data.entrySet()) {
+                        req.setAttribute(entry.getKey(), entry.getValue());
+                    }
+
+                    // Dispatcher vers l'URL de la vue
+                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
+                    dispatcher.forward(req, res);
+                } else {
+                    out.println("Type de retour non reconnu : " + result.getClass().getName());
+                }
             } else {
-                out.println("Aucune méthode associée à ce chemin");
+                out.println("Aucune methode associee à ce chemin");
             }
         } catch (Exception e) {
             e.printStackTrace();
