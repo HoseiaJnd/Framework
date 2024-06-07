@@ -21,28 +21,31 @@ public class FrontController extends HttpServlet {
 
     @Override
     public void init() throws ServletException {
-        findControllerClasses();
+        try {
+            findControllerClasses();
+        } catch (Exception e) {
+            logException(e);
+            throw new ServletException(e);
+        }
     }
 
-    public void findControllerClasses() {
+    public void findControllerClasses() throws Exception {
         String controllerPackage = getServletConfig().getInitParameter("controller");
         if (controllerPackage == null || controllerPackage.isEmpty()) {
-            System.err.println("Controller package not specified");
-            return;
+            throw new Exception("Controller package not specified");
         }
 
         String path = controllerPackage.replace('.', '/');
         File directory = new File(getServletContext().getRealPath("/WEB-INF/classes/" + path));
 
         if (!directory.exists() || !directory.isDirectory()) {
-            System.err.println("Package directory not found: " + directory.getAbsolutePath());
-            return;
+            throw new Exception("Package directory not found: " + directory.getAbsolutePath());
         }
 
         findClassesInDirectory(controllerPackage, directory);
     }
 
-    private void findClassesInDirectory(String packageName, File directory) {
+    private void findClassesInDirectory(String packageName, File directory) throws Exception {
         for (File file : Objects.requireNonNull(directory.listFiles())) {
             if (file.isDirectory()) {
                 findClassesInDirectory(packageName + "." + file.getName(), file);
@@ -53,20 +56,24 @@ public class FrontController extends HttpServlet {
         }
     }
 
-    private void addClassIfController(String className) {
+    private void addClassIfController(String className) throws Exception {
         try {
             Class<?> clazz = Class.forName(className);
             if (clazz.isAnnotationPresent(Annotation.class)) {
                 for (Method method : clazz.getDeclaredMethods()) {
                     if (method.isAnnotationPresent(GET.class)) {
                         GET getAnnotation = method.getAnnotation(GET.class);
+                        String url = getAnnotation.value();
+                        if (urlMappings.containsKey(url)) {
+                            throw new Exception("Duplicate URL mapping found for: " + url);
+                        }
                         Mapping mapping = new Mapping(clazz.getName(), method.getName());
-                        urlMappings.put(getAnnotation.value(), mapping);
+                        urlMappings.put(url, mapping);
                     }
                 }
             }
         } catch (ClassNotFoundException e) {
-            System.err.println("Class not found: " + className);
+            throw new Exception("Class not found: " + className, e);
         }
     }
 
@@ -110,15 +117,33 @@ public class FrontController extends HttpServlet {
                     RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
                     dispatcher.forward(req, res);
                 } else {
-                    out.println("Type de retour non reconnu : " + result.getClass().getName());
+                    throw new Exception("Type de retour non reconnu : " + result.getClass().getName());
                 }
             } else {
-                out.println("Aucune methode associee à ce chemin");
+                throw new Exception("Aucune méthode associée à ce chemin");
             }
         } catch (Exception e) {
-            e.printStackTrace();
-            out.println("Erreur : " + e.getMessage());
+            logException(e);
+            sendErrorPage(res, e.getMessage());
         }
+    }
+
+    private void logException(Exception e) {
+        e.printStackTrace(System.err);
+    }
+
+    private void sendErrorPage(HttpServletResponse res, String errorMessage) throws IOException {
+        res.setContentType("text/html");
+        PrintWriter out = res.getWriter();
+        out.println("<html>");
+        out.println("<head>");
+        out.println("<title>Error Page</title>");
+        out.println("</head>");
+        out.println("<body>");
+        out.println("<h1>Une erreur est survenue</h1>");
+        out.println("<p>" + errorMessage + "</p>");
+        out.println("</body>");
+        out.println("</html>");
     }
 
     @Override
