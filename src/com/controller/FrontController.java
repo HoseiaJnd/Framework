@@ -2,6 +2,7 @@ package com.controller;
 
 import com.annotation.Annotation;
 import com.annotation.GET;
+import com.annotation.RequestParam;
 import com.mapping.Mapping;
 import com.mapping.ModelView;
 import jakarta.servlet.*;
@@ -11,6 +12,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -93,13 +95,26 @@ public class FrontController extends HttpServlet {
 
                 // Récupérer la classe et la méthode
                 Class<?> clazz = Class.forName(mapping.getClassName());
-                Method method = clazz.getDeclaredMethod(mapping.getMethodName());
+                Method targetMethod = null;
+                for (Method method : clazz.getDeclaredMethods()) {
+                    if (method.getName().equals(mapping.getMethodName())) {
+                        targetMethod = method;
+                        break;
+                    }
+                }
+
+                if (targetMethod == null) {
+                    throw new Exception("Méthode non trouvée : " + mapping.getMethodName());
+                }
 
                 // Créer une instance de la classe
                 Object instance = clazz.getDeclaredConstructor().newInstance();
 
-                // Invoquer la méthode sur l'instance
-                Object result = method.invoke(instance);
+                // Récupérer les arguments de la méthode
+                Object[] methodArgs = getMethodArguments(targetMethod, req);
+
+                // Invoquer la méthode sur l'instance avec les arguments
+                Object result = targetMethod.invoke(instance, methodArgs);
 
                 if (result instanceof String) {
                     out.println("Résultat de la méthode : " + result);
@@ -126,6 +141,36 @@ public class FrontController extends HttpServlet {
             logException(e);
             sendErrorPage(res, e.getMessage());
         }
+    }
+
+    private Object[] getMethodArguments(Method method, HttpServletRequest req) throws Exception {
+        Parameter[] parameters = method.getParameters();
+        Object[] args = new Object[parameters.length];
+        for (int i = 0; i < parameters.length; i++) {
+            RequestParam requestParam = parameters[i].getAnnotation(RequestParam.class);
+            String paramName = requestParam != null && !requestParam.value().isEmpty() ? requestParam.value() : parameters[i].getName();
+            String paramValue = req.getParameter(paramName);
+            if (paramValue == null) {
+                throw new Exception("Missing required parameter: " + paramName);
+            }
+            args[i] = convertParameter(paramValue, parameters[i].getType());
+        }
+        return args;
+    }
+
+    private Object convertParameter(String value, Class<?> type) {
+        if (type == String.class) {
+            return value;
+        } else if (type == int.class || type == Integer.class) {
+            return Integer.parseInt(value);
+        } else if (type == long.class || type == Long.class) {
+            return Long.parseLong(value);
+        } else if (type == double.class || type == Double.class) {
+            return Double.parseDouble(value);
+        } else if (type == boolean.class || type == Boolean.class) {
+            return Boolean.parseBoolean(value);
+        }
+        return value;
     }
 
     private void logException(Exception e) {
