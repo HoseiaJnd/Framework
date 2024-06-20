@@ -2,15 +2,18 @@ package com.controller;
 
 import com.annotation.Annotation;
 import com.annotation.GET;
+import com.annotation.RequestBody;
 import com.annotation.RequestParam;
 import com.mapping.Mapping;
 import com.mapping.ModelView;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
+import com.thoughtworks.paranamer.*;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.HashMap;
@@ -145,15 +148,36 @@ public class FrontController extends HttpServlet {
 
     private Object[] getMethodArguments(Method method, HttpServletRequest req) throws Exception {
         Parameter[] parameters = method.getParameters();
+        Paranamer paranamer = new AdaptiveParanamer();
+        String[] parameterNames = paranamer.lookupParameterNames(method);
         Object[] args = new Object[parameters.length];
+        
         for (int i = 0; i < parameters.length; i++) {
-            RequestParam requestParam = parameters[i].getAnnotation(RequestParam.class);
-            String paramName = requestParam != null && !requestParam.value().isEmpty() ? requestParam.value() : parameters[i].getName();
-            String paramValue = req.getParameter(paramName);
-            if (paramValue == null) {
-                throw new Exception("Missing required parameter: " + paramName);
+            Parameter parameter = parameters[i];
+            if (parameter.isAnnotationPresent(RequestBody.class)) {
+                Class<?> parameterType = parameter.getType();
+                Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+                for (Field field : parameterType.getDeclaredFields()) {
+                    String paramName = field.isAnnotationPresent(RequestParam.class)
+                            ? field.getAnnotation(RequestParam.class).value()
+                            : field.getName();
+                    String paramValue = req.getParameter(paramName);
+                    if (paramValue != null) {
+                        field.setAccessible(true);
+                        field.set(parameterObject, convertParameter(paramValue, field.getType()));
+                    }
+                }
+                args[i] = parameterObject;
+            } else {
+                String paramName = parameter.isAnnotationPresent(RequestParam.class)
+                        ? parameter.getAnnotation(RequestParam.class).value()
+                        : parameterNames[i];
+                String paramValue = req.getParameter(paramName);
+                if (paramValue == null) {
+                    throw new Exception("Missing required parameter: " + paramName);
+                }
+                args[i] = convertParameter(paramValue, parameter.getType());
             }
-            args[i] = convertParameter(paramValue, parameters[i].getType());
         }
         return args;
     }
