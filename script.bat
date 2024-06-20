@@ -1,28 +1,29 @@
 @echo off
 setlocal
 
-REM Définir le chemin vers l'API servlet
+REM Set the servlet API path
 set "SERVLET_API=%cd%\lib\servlet-api.jar"
 
-REM Chemin vers le répertoire source
+REM Set the Paranamer path
+set "PARANAMER=%cd%\lib\paranamer-2.8.jar"
+
+REM Set the source directory
 set "src=%cd%\src"
 
-REM Répertoire de sortie pour les fichiers .class
+REM Set the output directory
 set "OUTPUT_DIR=bin"
-
-REM Chemin complet du fichier JAR à créer
 set "JAR_FILE=myfw\framework.jar"
 
-REM Compilation des fichiers source .java
+REM Compile the Java files
 for /R "%src%" %%f in (*.java) do (
-    javac -cp "%SERVLET_API%;%src%" -d "%OUTPUT_DIR%" "%%f"
+    javac -cp "%SERVLET_API%;%PARANAMER%;%src%" -d "%OUTPUT_DIR%" "%%f"
 )
 
-REM Se déplacer vers le répertoire de sortie
+REM Change to the output directory
 cd /d %OUTPUT_DIR%
 
-REM Créer le fichier JAR
+REM Create the JAR file
 jar cvf "%JAR_FILE%" *
 
-echo Création du JAR terminée.
+echo JAR creation completed.
 pause
