@@ -6,9 +6,9 @@ import com.annotation.RequestBody;
 import com.annotation.RequestParam;
 import com.mapping.Mapping;
 import com.mapping.ModelView;
+import com.mapping.MySession;
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
-import com.thoughtworks.paranamer.*;
 
 import java.io.File;
 import java.io.IOException;
@@ -82,7 +82,7 @@ public class FrontController extends HttpServlet {
         }
     }
 
-    protected void processRequested(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
+    protected void processRequest(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
         PrintWriter out = res.getWriter();
         try {
             String url = req.getRequestURL().toString();
@@ -90,6 +90,7 @@ public class FrontController extends HttpServlet {
             String path = url.substring(url.indexOf(contextPath) + contextPath.length());
 
             out.println("URL: " + url);
+            out.println("ContextPath: " + contextPath);
             out.println("Path: " + path);
 
             Mapping mapping = urlMappings.get(path);
@@ -148,10 +149,8 @@ public class FrontController extends HttpServlet {
 
     private Object[] getMethodArguments(Method method, HttpServletRequest req) throws Exception {
         Parameter[] parameters = method.getParameters();
-        Paranamer paranamer = new AdaptiveParanamer();
-        String[] parameterNames = paranamer.lookupParameterNames(method);
         Object[] args = new Object[parameters.length];
-        
+
         for (int i = 0; i < parameters.length; i++) {
             Parameter parameter = parameters[i];
             if (parameter.isAnnotationPresent(RequestBody.class)) {
@@ -162,21 +161,31 @@ public class FrontController extends HttpServlet {
                             ? field.getAnnotation(RequestParam.class).value()
                             : field.getName();
                     String paramValue = req.getParameter(paramName);
-                    if (paramValue != null) {
+                    if (paramValue != null || paramValue != "") {
                         field.setAccessible(true);
                         field.set(parameterObject, convertParameter(paramValue, field.getType()));
                     }
+                    if(paramValue == null || paramValue == ""){
+                        throw new Exception("ETU002457//Missing required parameter: " + paramName);
+                    }
                 }
                 args[i] = parameterObject;
+            } else if (parameter.getType().equals(MySession.class)) {
+                args[i] = new MySession(req.getSession());
             } else {
-                String paramName = parameter.isAnnotationPresent(RequestParam.class)
-                        ? parameter.getAnnotation(RequestParam.class).value()
-                        : parameterNames[i];
-                String paramValue = req.getParameter(paramName);
-                if (paramValue == null) {
-                    throw new Exception("Missing required parameter: " + paramName);
+                String paramName = null;
+                if (parameter.isAnnotationPresent(RequestParam.class)) {
+                    paramName = parameter.getAnnotation(RequestParam.class).value();
+                    String paramValue = req.getParameter(paramName);
+                    if (paramValue == null) {
+                        throw new Exception("ETU002457//Missing required parameter: " + paramName);
+                    }
+                    System.out.println(paramValue);
+                    args[i] = convertParameter(paramValue, parameter.getType());
                 }
-                args[i] = convertParameter(paramValue, parameter.getType());
+                else{
+                    throw new Exception("ETU002457//Missing parameter annotation: " + paramName);
+                }
             }
         }
         return args;
@@ -217,11 +226,11 @@ public class FrontController extends HttpServlet {
 
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequested(req, res);
+        processRequest(req, res);
     }
 
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
-        processRequested(req, res);
+        processRequest(req, res);
     }
 }
