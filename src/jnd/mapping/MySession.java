@@ -1,4 +1,4 @@
-package com.mapping;
+package jnd.mapping;
 
 import jakarta.servlet.http.HttpSession;
 import java.util.Enumeration;

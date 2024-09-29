@@ -1,9 +1,9 @@
-package com.annotation;
+package jnd.annotation;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
 @Retention(RetentionPolicy.RUNTIME)
-public @interface GET {
-    String value();
+public @interface Annotation {
+    String value() default "";
 }
