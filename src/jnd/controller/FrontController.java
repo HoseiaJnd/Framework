@@ -1,14 +1,16 @@
-package com.controller;
+package jnd.controller;
 
-import com.annotation.Annotation;
-import com.annotation.GET;
-import com.annotation.RequestBody;
-import com.annotation.RequestParam;
-import com.mapping.Mapping;
-import com.mapping.ModelView;
-import com.mapping.MySession;
+import com.google.gson.*;
+
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
+import jnd.annotation.Annotation;
+import jnd.annotation.GET;
+import jnd.annotation.RequestBody;
+import jnd.annotation.RequestParam;
+import jnd.mapping.Mapping;
+import jnd.mapping.ModelView;
+import jnd.mapping.MySession;
 
 import java.io.File;
 import java.io.IOException;
@@ -23,6 +25,7 @@ import java.util.Objects;
 public class FrontController extends HttpServlet {
 
     private Map<String, Mapping> urlMappings = new HashMap<>();
+    private Gson gson = new Gson();  // Instance de Gson pour la sérialisation JSON
 
     @Override
     public void init() throws ServletException {
@@ -84,20 +87,15 @@ public class FrontController extends HttpServlet {
 
     protected void processRequest(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
         PrintWriter out = res.getWriter();
+        res.setContentType("application/json");  // Définir le type de contenu comme JSON
+
         try {
             String url = req.getRequestURL().toString();
             String contextPath = req.getContextPath();
             String path = url.substring(url.indexOf(contextPath) + contextPath.length());
 
-            out.println("URL: " + url);
-            out.println("ContextPath: " + contextPath);
-            out.println("Path: " + path);
-
             Mapping mapping = urlMappings.get(path);
             if (mapping != null) {
-                out.println("Mapping trouvé : " + mapping);
-
-                // Récupérer la classe et la méthode
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Method targetMethod = null;
                 for (Method method : clazz.getDeclaredMethods()) {
@@ -111,18 +109,13 @@ public class FrontController extends HttpServlet {
                     throw new Exception("Méthode non trouvée : " + mapping.getMethodName());
                 }
 
-                // Créer une instance de la classe
                 Object instance = clazz.getDeclaredConstructor().newInstance();
-
-                // Récupérer les arguments de la méthode
                 Object[] methodArgs = getMethodArguments(targetMethod, req);
 
-                // Invoquer la méthode sur l'instance avec les arguments
+                // Invoquer la méthode
                 Object result = targetMethod.invoke(instance, methodArgs);
 
-                if (result instanceof String) {
-                    out.println("Résultat de la méthode : " + result);
-                } else if (result instanceof ModelView) {
+                if (result instanceof ModelView) {
                     ModelView modelView = (ModelView) result;
                     String viewUrl = modelView.getUrl();
                     Map<String, Object> data = modelView.getData();
@@ -136,7 +129,10 @@ public class FrontController extends HttpServlet {
                     RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
                     dispatcher.forward(req, res);
                 } else {
-                    throw new Exception("Type de retour non reconnu : " + result.getClass().getName());
+                    // Retourner la réponse JSON
+                    String jsonResponse = gson.toJson(result);
+                    out.print(jsonResponse);
+                    out.flush();
                 }
             } else {
                 throw new Exception("Aucune méthode associée à ce chemin");
@@ -180,10 +176,8 @@ public class FrontController extends HttpServlet {
                     if (paramValue == null) {
                         throw new Exception("ETU002457//Missing required parameter: " + paramName);
                     }
-                    System.out.println(paramValue);
                     args[i] = convertParameter(paramValue, parameter.getType());
-                }
-                else{
+                } else {
                     throw new Exception("ETU002457//Missing parameter annotation: " + paramName);
                 }
             }
@@ -211,17 +205,9 @@ public class FrontController extends HttpServlet {
     }
 
     private void sendErrorPage(HttpServletResponse res, String errorMessage) throws IOException {
-        res.setContentType("text/html");
+        res.setContentType("application/json");
         PrintWriter out = res.getWriter();
-        out.println("<html>");
-        out.println("<head>");
-        out.println("<title>Error Page</title>");
-        out.println("</head>");
-        out.println("<body>");
-        out.println("<h1>Une erreur est survenue</h1>");
-        out.println("<p>" + errorMessage + "</p>");
-        out.println("</body>");
-        out.println("</html>");
+        out.println("{\"error\":\"" + errorMessage + "\"}");
     }
 
     @Override
