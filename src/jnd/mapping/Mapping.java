@@ -3,10 +3,12 @@ package jnd.mapping;
 public class Mapping {
     private String className;
     private String methodName;
+    private String httpVerb; // Ajoutez cet attribut
 
-    public Mapping(String className, String methodName) {
+    public Mapping(String className, String methodName, String httpVerb) {
         this.className = className;
         this.methodName = methodName;
+        this.httpVerb = httpVerb;
     }
 
     public String getClassName() {
@@ -23,6 +25,10 @@ public class Mapping {
 
     public void setMethodName(String methodName) {
         this.methodName = methodName;
+    }
+
+    public String getHttpVerb() {
+        return httpVerb;
     }
 
     @Override
