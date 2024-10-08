@@ -6,6 +6,7 @@ import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import jnd.annotation.Annotation;
 import jnd.annotation.GET;
+import jnd.annotation.POST;
 import jnd.annotation.RequestBody;
 import jnd.annotation.RequestParam;
 import jnd.mapping.Mapping;
@@ -69,13 +70,23 @@ public class FrontController extends HttpServlet {
             Class<?> clazz = Class.forName(className);
             if (clazz.isAnnotationPresent(Annotation.class)) {
                 for (Method method : clazz.getDeclaredMethods()) {
+                    String url = null;
+                    String httpVerb = "GET"; // Par défaut, GET
+
                     if (method.isAnnotationPresent(GET.class)) {
                         GET getAnnotation = method.getAnnotation(GET.class);
-                        String url = getAnnotation.value();
+                        url = getAnnotation.value();
+                    } else if (method.isAnnotationPresent(POST.class)) {
+                        POST postAnnotation = method.getAnnotation(POST.class);
+                        url = postAnnotation.value();
+                        httpVerb = "POST";
+                    }
+
+                    if (url != null) {
                         if (urlMappings.containsKey(url)) {
                             throw new Exception("Duplicate URL mapping found for: " + url);
                         }
-                        Mapping mapping = new Mapping(clazz.getName(), method.getName());
+                        Mapping mapping = new Mapping(clazz.getName(), method.getName(), httpVerb);
                         urlMappings.put(url, mapping);
                     }
                 }
@@ -87,7 +98,7 @@ public class FrontController extends HttpServlet {
 
     protected void processRequest(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
         PrintWriter out = res.getWriter();
-        res.setContentType("application/json");  // Définir le type de contenu comme JSON
+        res.setContentType("application/json");
 
         try {
             String url = req.getRequestURL().toString();
@@ -96,6 +107,11 @@ public class FrontController extends HttpServlet {
 
             Mapping mapping = urlMappings.get(path);
             if (mapping != null) {
+                String requestMethod = req.getMethod();
+                if (!mapping.getHttpVerb().equalsIgnoreCase(requestMethod)) {
+                    throw new Exception("Incorrect HTTP method for URL: " + path);
+                }
+
                 Class<?> clazz = Class.forName(mapping.getClassName());
                 Method targetMethod = null;
                 for (Method method : clazz.getDeclaredMethods()) {
@@ -112,7 +128,6 @@ public class FrontController extends HttpServlet {
                 Object instance = clazz.getDeclaredConstructor().newInstance();
                 Object[] methodArgs = getMethodArguments(targetMethod, req);
 
-                // Invoquer la méthode
                 Object result = targetMethod.invoke(instance, methodArgs);
 
                 if (result instanceof ModelView) {
@@ -120,16 +135,13 @@ public class FrontController extends HttpServlet {
                     String viewUrl = modelView.getUrl();
                     Map<String, Object> data = modelView.getData();
 
-                    // Boucle sur les données pour les mettre dans la requête
                     for (Map.Entry<String, Object> entry : data.entrySet()) {
                         req.setAttribute(entry.getKey(), entry.getValue());
                     }
 
-                    // Dispatcher vers l'URL de la vue
                     RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
                     dispatcher.forward(req, res);
                 } else {
-                    // Retourner la réponse JSON
                     String jsonResponse = gson.toJson(result);
                     out.print(jsonResponse);
                     out.flush();
