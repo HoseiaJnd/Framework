@@ -20,8 +20,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 public class FrontController extends HttpServlet {
 
@@ -69,6 +71,9 @@ public class FrontController extends HttpServlet {
         try {
             Class<?> clazz = Class.forName(className);
             if (clazz.isAnnotationPresent(Annotation.class)) {
+                Set<String> methodNames = new HashSet<>();
+                Set<String> methodSignatures = new HashSet<>();
+
                 for (Method method : clazz.getDeclaredMethods()) {
                     String url = null;
                     String httpVerb = "GET"; // Par défaut, GET
@@ -89,6 +94,19 @@ public class FrontController extends HttpServlet {
                         Mapping mapping = new Mapping(clazz.getName(), method.getName(), httpVerb);
                         urlMappings.put(url, mapping);
                     }
+
+                    // Vérification des méthodes ayant le même nom et le même verbe HTTP
+                    String methodSignature = method.getName() + "#" + httpVerb;
+                    if (methodSignatures.contains(methodSignature)) {
+                        throw new Exception("Duplicate method name and HTTP verb found in class: " + className + " for method: " + method.getName());
+                    }
+                    methodSignatures.add(methodSignature);
+
+                    // Vérification des méthodes ayant le même nom
+                    if (methodNames.contains(method.getName())) {
+                        throw new Exception("Duplicate method name found in class: " + className + " for method: " + method.getName());
+                    }
+                    methodNames.add(method.getName());
                 }
             }
         } catch (ClassNotFoundException e) {
@@ -98,7 +116,7 @@ public class FrontController extends HttpServlet {
 
     protected void processRequest(HttpServletRequest req, HttpServletResponse res) throws IOException, ServletException {
         PrintWriter out = res.getWriter();
-        res.setContentType("application/json");
+        res.setContentType("text/html");
 
         try {
             String url = req.getRequestURL().toString();
@@ -217,9 +235,12 @@ public class FrontController extends HttpServlet {
     }
 
     private void sendErrorPage(HttpServletResponse res, String errorMessage) throws IOException {
-        res.setContentType("application/json");
+        res.setContentType("text/html");
         PrintWriter out = res.getWriter();
-        out.println("{\"error\":\"" + errorMessage + "\"}");
+        out.println("<html><body>");
+        out.println("<h1>Error</h1>");
+        out.println("<p>" + errorMessage + "</p>");
+        out.println("</body></html>");
     }
 
     @Override
