@@ -1,7 +1,6 @@
 package jnd.controller;
 
 import com.google.gson.*;
-
 import jakarta.servlet.*;
 import jakarta.servlet.http.*;
 import jnd.annotation.Annotation;
@@ -24,6 +23,12 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.List;
+
+// import org.apache.commons.fileupload.FileItem;
+// import org.apache.commons.fileupload.disk.DiskFileItemFactory;
+// import org.apache.commons.fileupload.servlet.ServletFileUpload;
+// import org.apache.commons.fileupload.servlet.ServletRequestContext;
 
 public class FrontController extends HttpServlet {
 
@@ -145,6 +150,19 @@ public class FrontController extends HttpServlet {
 
                 Object instance = clazz.getDeclaredConstructor().newInstance();
                 Object[] methodArgs = getMethodArguments(targetMethod, req);
+
+                // Vérifiez si la requête est de type multipart
+                if (req.getContentType() != null && req.getContentType().startsWith("multipart/")) {
+                    for (Part part : req.getParts()) {
+                        String fileName = part.getSubmittedFileName();
+                        if (fileName != null) {
+                            // Traiter le fichier téléchargé
+                            // Enregistrer sur le disque
+                            File uploadedFile = new File("/upload/" + fileName);
+                            part.write(uploadedFile.getAbsolutePath());
+                        }
+                    }
+                }
 
                 Object result = targetMethod.invoke(instance, methodArgs);
 
