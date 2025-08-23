@@ -8,9 +8,13 @@ import jnd.annotation.GET;
 import jnd.annotation.POST;
 import jnd.annotation.RequestBody;
 import jnd.annotation.RequestParam;
+import jnd.annotation.Role;
+import jnd.annotation.FormUrl;
 import jnd.mapping.Mapping;
 import jnd.mapping.ModelView;
 import jnd.mapping.MySession;
+import jnd.manager.AuthManager;
+import jnd.exception.ValidationException;
 
 import java.io.File;
 import java.io.IOException;
@@ -148,6 +152,24 @@ public class FrontController extends HttpServlet {
                     throw new Exception("Méthode non trouvée : " + mapping.getMethodName());
                 }
 
+                // Vérifier les rôles requis
+                if (targetMethod.isAnnotationPresent(Role.class)) {
+                    Role roleAnnotation = targetMethod.getAnnotation(Role.class);
+                    if (!AuthManager.isAuthenticated(req.getSession())) {
+                        // Rediriger vers la page de connexion si l'utilisateur n'est pas authentifié
+                        res.sendRedirect(req.getContextPath() + "/login");
+                        return;
+                    }
+                    
+                    // Vérifier les rôles et le niveau requis
+                    if (!AuthManager.hasAnyRole(req.getSession(), roleAnnotation.value()) ||
+                        !AuthManager.hasRequiredLevel(req.getSession(), roleAnnotation.level())) {
+                        // Rediriger vers une page d'erreur d'autorisation
+                        res.sendError(HttpServletResponse.SC_FORBIDDEN, "Accès non autorisé");
+                        return;
+                    }
+                }
+
                 Object instance = clazz.getDeclaredConstructor().newInstance();
                 
                 try {
@@ -170,12 +192,9 @@ public class FrontController extends HttpServlet {
                             
                             // Si une URL de formulaire est spécifiée, rediriger vers celle-ci
                             if (formUrl != null) {
-                                // Ajouter les erreurs de validation à la requête
                                 req.setAttribute("validationErrors", validationErrors);
-                                // Rediriger vers l'URL du formulaire
                                 req.getRequestDispatcher(formUrl).forward(req, res);
                             } else {
-                                // Sinon, rediriger vers la page d'erreur par défaut
                                 req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
                             }
                             return;
@@ -196,20 +215,16 @@ public class FrontController extends HttpServlet {
                         out.flush();
                     }
                 } catch (ValidationException ve) {
-                    // Gérer les erreurs de validation
                     req.setAttribute("validationErrors", ve.getValidationErrors());
                     
-                    // Vérifier si une URL de formulaire est spécifiée
                     String formUrl = null;
                     if (targetMethod.isAnnotationPresent(FormUrl.class)) {
                         formUrl = targetMethod.getAnnotation(FormUrl.class).value();
                     }
                     
-                    // Si une URL de formulaire est spécifiée, rediriger vers celle-ci
                     if (formUrl != null) {
                         req.getRequestDispatcher(formUrl).forward(req, res);
                     } else {
-                        // Sinon, rediriger vers la page d'erreur par défaut
                         req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
                     }
                 }
