@@ -1,39 +1,51 @@
 package jnd.controller;
 
-import com.google.gson.*;
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
+import jakarta.servlet.RequestDispatcher;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.Part;
+import jakarta.servlet.annotation.MultipartConfig;
+
+import com.google.gson.Gson;
+
+import jnd.mapping.Mapping;
 import jnd.annotation.Annotation;
 import jnd.annotation.GET;
 import jnd.annotation.POST;
-import jnd.annotation.RequestBody;
-import jnd.annotation.RequestParam;
+import jnd.annotation.ClassRole;
 import jnd.annotation.Role;
 import jnd.annotation.FormUrl;
-import jnd.mapping.Mapping;
+import jnd.annotation.RequestBody;
+import jnd.annotation.RequestParam;
+import jnd.annotation.FileUpload;
+import jnd.auth.AuthManager;
+import jnd.validation.ValidationException;
 import jnd.mapping.ModelView;
+import jnd.upload.UploadedFile;
+import jnd.validation.ValidationError;
 import jnd.mapping.MySession;
-import jnd.manager.AuthManager;
-import jnd.exception.ValidationException;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
-import java.util.List;
+import java.util.*;
 
 // import org.apache.commons.fileupload.FileItem;
 // import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 // import org.apache.commons.fileupload.servlet.ServletFileUpload;
 // import org.apache.commons.fileupload.servlet.ServletRequestContext;
 
+@MultipartConfig(
+    fileSizeThreshold = 1024 * 1024, // 1 MB
+    maxFileSize = 1024 * 1024 * 5,   // 5 MB
+    maxRequestSize = 1024 * 1024 * 10 // 10 MB
+)
 public class FrontController extends HttpServlet {
 
     private Map<String, Mapping> urlMappings = new HashMap<>();
@@ -152,7 +164,25 @@ public class FrontController extends HttpServlet {
                     throw new Exception("Méthode non trouvée : " + mapping.getMethodName());
                 }
 
-                // Vérifier les rôles requis
+                // Vérifier les rôles requis au niveau de la classe
+                if (clazz.isAnnotationPresent(ClassRole.class)) {
+                    ClassRole classRoleAnnotation = clazz.getAnnotation(ClassRole.class);
+                    if (!AuthManager.isAuthenticated(req.getSession())) {
+                        // Rediriger vers la page de connexion si l'utilisateur n'est pas authentifié
+                        res.sendRedirect(req.getContextPath() + "/login");
+                        return;
+                    }
+                    
+                    // Vérifier les rôles et le niveau requis au niveau de la classe
+                    if (!AuthManager.hasAnyRole(req.getSession(), classRoleAnnotation.value()) ||
+                        !AuthManager.hasRequiredLevel(req.getSession(), classRoleAnnotation.level())) {
+                        // Rediriger vers une page d'erreur d'autorisation
+                        res.sendError(HttpServletResponse.SC_FORBIDDEN, "Accès non autorisé");
+                        return;
+                    }
+                }
+
+                // Vérifier les rôles requis au niveau de la méthode (surcharge les rôles de la classe)
                 if (targetMethod.isAnnotationPresent(Role.class)) {
                     Role roleAnnotation = targetMethod.getAnnotation(Role.class);
                     if (!AuthManager.isAuthenticated(req.getSession())) {
@@ -161,7 +191,7 @@ public class FrontController extends HttpServlet {
                         return;
                     }
                     
-                    // Vérifier les rôles et le niveau requis
+                    // Vérifier les rôles et le niveau requis au niveau de la méthode
                     if (!AuthManager.hasAnyRole(req.getSession(), roleAnnotation.value()) ||
                         !AuthManager.hasRequiredLevel(req.getSession(), roleAnnotation.level())) {
                         // Rediriger vers une page d'erreur d'autorisation
@@ -240,40 +270,131 @@ public class FrontController extends HttpServlet {
     private Object[] getMethodArguments(Method method, HttpServletRequest req) throws Exception {
         Parameter[] parameters = method.getParameters();
         Object[] args = new Object[parameters.length];
+        boolean isMultipart = req.getContentType() != null && req.getContentType().toLowerCase().startsWith("multipart/form-data");
+        Map<String, String> paramMap = new HashMap<>();
+        Map<String, UploadedFile> fileMap = new HashMap<>();
+
+        if (isMultipart) {
+            Collection<Part> parts = req.getParts();
+            
+            for (Part part : parts) {
+                String fieldName = part.getName();
+                if (part.getSubmittedFileName() == null) {
+                    // This is a form field
+                    String value = new String(part.getInputStream().readAllBytes());
+                    paramMap.put(fieldName, value);
+                } else {
+                    // This is a file upload
+                    UploadedFile uploadedFile = new UploadedFile(
+                        part.getSubmittedFileName(),
+                        part.getContentType(),
+                        part.getSize(),
+                        part.getInputStream()
+                    );
+                    fileMap.put(fieldName, uploadedFile);
+                }
+            }
+        } else {
+            // Handle regular form parameters
+            Map<String, String[]> parameterMap = req.getParameterMap();
+            for (Map.Entry<String, String[]> entry : parameterMap.entrySet()) {
+                String key = entry.getKey();
+                String[] values = entry.getValue();
+                if (values != null && values.length > 0) {
+                    paramMap.put(key, values[0]);
+                }
+            }
+        }
 
         for (int i = 0; i < parameters.length; i++) {
             Parameter parameter = parameters[i];
+            
+            if (parameter.isAnnotationPresent(FileUpload.class)) {
+                FileUpload uploadAnnotation = parameter.getAnnotation(FileUpload.class);
+                String paramName = uploadAnnotation.value().isEmpty() ? parameter.getName() : uploadAnnotation.value();
+                
+                if (fileMap.containsKey(paramName)) {
+                    UploadedFile file = fileMap.get(paramName);
+                    
+                    // Validate file type if specified
+                    if (uploadAnnotation.allowedTypes().length > 0) {
+                        boolean validType = false;
+                        String extension = file.getExtension().toLowerCase();
+                        for (String type : uploadAnnotation.allowedTypes()) {
+                            if (type.toLowerCase().equals(extension)) {
+                                validType = true;
+                                break;
+                            }
+                        }
+                        if (!validType) {
+                            throw new Exception("Invalid file type for " + paramName);
+                        }
+                    }
+                    
+                    // Validate file size if specified
+                    if (uploadAnnotation.maxSize() > 0 && file.getSize() > uploadAnnotation.maxSize()) {
+                        throw new Exception("File size exceeds maximum allowed size for " + paramName);
+                    }
+                    
+                    // Save file if directory is specified
+                    if (!uploadAnnotation.directory().isEmpty()) {
+                        String directory = uploadAnnotation.directory();
+                        File dir = new File(req.getServletContext().getRealPath(directory));
+                        if (!dir.exists()) {
+                            dir.mkdirs();
+                        }
+                        
+                        String fileName = file.getFileName();
+                        String filePath = new File(dir, fileName).getAbsolutePath();
+                        try (InputStream input = file.getInputStream()) {
+                            java.nio.file.Files.copy(
+                                input,
+                                new File(filePath).toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+                            );
+                        }
+                        file.setSavedPath(directory + "/" + fileName);
+                    }
+                    
+                    args[i] = file;
+                } else {
+                    args[i] = null;
+                }
+                continue;
+            }
+            
             if (parameter.isAnnotationPresent(RequestBody.class)) {
                 Class<?> parameterType = parameter.getType();
                 Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+                
                 for (Field field : parameterType.getDeclaredFields()) {
                     String paramName = field.isAnnotationPresent(RequestParam.class)
                             ? field.getAnnotation(RequestParam.class).value()
                             : field.getName();
-                    String paramValue = req.getParameter(paramName);
-                    if (paramValue != null || paramValue != "") {
+                            
+                    String paramValue = isMultipart ? paramMap.get(paramName) : req.getParameter(paramName);
+                    
+                    if (paramValue != null && !paramValue.isEmpty()) {
                         field.setAccessible(true);
                         field.set(parameterObject, convertParameter(paramValue, field.getType()));
-                    }
-                    if(paramValue == null || paramValue == ""){
+                    } else {
                         throw new Exception("ETU002457//Missing required parameter: " + paramName);
                     }
                 }
                 args[i] = parameterObject;
             } else if (parameter.getType().equals(MySession.class)) {
                 args[i] = new MySession(req.getSession());
-            } else {
-                String paramName = null;
-                if (parameter.isAnnotationPresent(RequestParam.class)) {
-                    paramName = parameter.getAnnotation(RequestParam.class).value();
-                    String paramValue = req.getParameter(paramName);
-                    if (paramValue == null) {
-                        throw new Exception("ETU002457//Missing required parameter: " + paramName);
-                    }
-                    args[i] = convertParameter(paramValue, parameter.getType());
-                } else {
-                    throw new Exception("ETU002457//Missing parameter annotation: " + paramName);
+            } else if (parameter.isAnnotationPresent(RequestParam.class)) {
+                RequestParam paramAnnotation = parameter.getAnnotation(RequestParam.class);
+                String paramName = paramAnnotation.value().isEmpty() ? parameter.getName() : paramAnnotation.value();
+                String paramValue = isMultipart ? paramMap.get(paramName) : req.getParameter(paramName);
+                
+                if (paramValue == null) {
+                    throw new Exception("ETU002457//Missing required parameter: " + paramName);
                 }
+                args[i] = convertParameter(paramValue, parameter.getType());
+            } else {
+                throw new Exception("ETU002457//Missing parameter annotation");
             }
         }
         return args;
@@ -315,5 +436,55 @@ public class FrontController extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequest(req, res);
+    }
+
+    private void handleFileUpload(Method method, Object[] args, HttpServletRequest request) throws Exception {
+        if (!request.getContentType().toLowerCase().startsWith("multipart/form-data")) {
+            return;
+        }
+
+        Collection<Part> parts = request.getParts();
+        Parameter[] parameters = method.getParameters();
+        
+        for (int i = 0; i < parameters.length; i++) {
+            FileUpload fileUpload = parameters[i].getAnnotation(FileUpload.class);
+            if (fileUpload != null) {
+                for (Part part : parts) {
+                    if (!part.getSubmittedFileName().isEmpty()) {
+                        validateFileUpload(part, fileUpload);
+                        args[i] = new UploadedFile(
+                            part.getSubmittedFileName(),
+                            part.getContentType(),
+                            part.getSize(),
+                            part.getInputStream()
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private void validateFileUpload(Part part, FileUpload fileUpload) throws Exception {
+        // Validate file type if specified
+        if (fileUpload.allowedTypes().length > 0) {
+            String fileName = part.getSubmittedFileName();
+            String extension = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+            boolean validType = false;
+            for (String type : fileUpload.allowedTypes()) {
+                if (type.toLowerCase().equals(extension)) {
+                    validType = true;
+                    break;
+                }
+            }
+            if (!validType) {
+                throw new Exception("Invalid file type for " + part.getName());
+            }
+        }
+        
+        // Validate file size if specified
+        if (fileUpload.maxSize() > 0 && part.getSize() > fileUpload.maxSize()) {
+            throw new Exception("File size exceeds maximum allowed size for " + part.getName());
+        }
     }
 }
