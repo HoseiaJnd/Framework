@@ -11,6 +11,8 @@ import jnd.annotation.RequestParam;
 import jnd.mapping.Mapping;
 import jnd.mapping.ModelView;
 import jnd.mapping.MySession;
+import jnd.validation.ValidationError;
+import jnd.validation.Validator;
 
 import java.io.File;
 import java.io.IOException;
@@ -149,38 +151,41 @@ public class FrontController extends HttpServlet {
                 }
 
                 Object instance = clazz.getDeclaredConstructor().newInstance();
-                Object[] methodArgs = getMethodArguments(targetMethod, req);
+                
+                try {
+                    Object[] methodArgs = getMethodArguments(targetMethod, req);
+                    Object result = targetMethod.invoke(instance, methodArgs);
 
-                // Vérifiez si la requête est de type multipart
-                if (req.getContentType() != null && req.getContentType().startsWith("multipart/")) {
-                    for (Part part : req.getParts()) {
-                        String fileName = part.getSubmittedFileName();
-                        if (fileName != null) {
-                            // Traiter le fichier téléchargé
-                            // Enregistrer sur le disque
-                            File uploadedFile = new File("/upload/" + fileName);
-                            part.write(uploadedFile.getAbsolutePath());
+                    if (result instanceof ModelView) {
+                        ModelView modelView = (ModelView) result;
+                        
+                        // Vérifier s'il y a des erreurs de validation
+                        ValidationError validationErrors = (ValidationError) req.getAttribute("validationErrors");
+                        if (validationErrors != null && validationErrors.hasErrors()) {
+                            modelView.setValidationErrors(validationErrors);
+                            // Rediriger vers la page d'erreur par défaut
+                            req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
+                            return;
                         }
+
+                        String viewUrl = modelView.getUrl();
+                        Map<String, Object> data = modelView.getData();
+
+                        for (Map.Entry<String, Object> entry : data.entrySet()) {
+                            req.setAttribute(entry.getKey(), entry.getValue());
+                        }
+
+                        RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
+                        dispatcher.forward(req, res);
+                    } else {
+                        String jsonResponse = gson.toJson(result);
+                        out.print(jsonResponse);
+                        out.flush();
                     }
-                }
-
-                Object result = targetMethod.invoke(instance, methodArgs);
-
-                if (result instanceof ModelView) {
-                    ModelView modelView = (ModelView) result;
-                    String viewUrl = modelView.getUrl();
-                    Map<String, Object> data = modelView.getData();
-
-                    for (Map.Entry<String, Object> entry : data.entrySet()) {
-                        req.setAttribute(entry.getKey(), entry.getValue());
-                    }
-
-                    RequestDispatcher dispatcher = req.getRequestDispatcher(viewUrl);
-                    dispatcher.forward(req, res);
-                } else {
-                    String jsonResponse = gson.toJson(result);
-                    out.print(jsonResponse);
-                    out.flush();
+                } catch (ValidationException ve) {
+                    // Gérer les erreurs de validation
+                    req.setAttribute("validationErrors", ve.getValidationErrors());
+                    req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
                 }
             } else {
                 throw new Exception("Aucune méthode associée à ce chemin");
@@ -200,21 +205,30 @@ public class FrontController extends HttpServlet {
             if (parameter.isAnnotationPresent(RequestBody.class)) {
                 Class<?> parameterType = parameter.getType();
                 Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
+                
+                // Remplir l'objet avec les paramètres de la requête
                 for (Field field : parameterType.getDeclaredFields()) {
                     String paramName = field.isAnnotationPresent(RequestParam.class)
                             ? field.getAnnotation(RequestParam.class).value()
                             : field.getName();
                     String paramValue = req.getParameter(paramName);
-                    if (paramValue != null || paramValue != "") {
+                    if (paramValue != null && !paramValue.isEmpty()) {
                         field.setAccessible(true);
                         field.set(parameterObject, convertParameter(paramValue, field.getType()));
                     }
-                    if(paramValue == null || paramValue == ""){
-                        throw new Exception("ETU002457//Missing required parameter: " + paramName);
-                    }
                 }
+                
+                // Valider l'objet
+                ValidationError validationErrors = Validator.validate(parameterObject);
+                if (validationErrors.hasErrors()) {
+                    // Si des erreurs sont présentes, les ajouter à la requête
+                    req.setAttribute("validationErrors", validationErrors);
+                    // Rediriger vers la page d'erreur
+                    throw new ValidationException("Erreurs de validation", validationErrors);
+                }
+                
                 args[i] = parameterObject;
-            } else if (parameter.getType().equals(MySession.class)) {
+            } else if (parameter.getType() == MySession.class) {
                 args[i] = new MySession(req.getSession());
             } else {
                 String paramName = null;
@@ -269,5 +283,19 @@ public class FrontController extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequest(req, res);
+    }
+
+    // Classe d'exception pour la validation
+    private static class ValidationException extends Exception {
+        private final ValidationError validationErrors;
+
+        public ValidationException(String message, ValidationError validationErrors) {
+            super(message);
+            this.validationErrors = validationErrors;
+        }
+
+        public ValidationError getValidationErrors() {
+            return validationErrors;
+        }
     }
 }
