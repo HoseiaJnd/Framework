@@ -11,8 +11,6 @@ import jnd.annotation.RequestParam;
 import jnd.mapping.Mapping;
 import jnd.mapping.ModelView;
 import jnd.mapping.MySession;
-import jnd.validation.ValidationError;
-import jnd.validation.Validator;
 
 import java.io.File;
 import java.io.IOException;
@@ -163,8 +161,23 @@ public class FrontController extends HttpServlet {
                         ValidationError validationErrors = (ValidationError) req.getAttribute("validationErrors");
                         if (validationErrors != null && validationErrors.hasErrors()) {
                             modelView.setValidationErrors(validationErrors);
-                            // Rediriger vers la page d'erreur par défaut
-                            req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
+                            
+                            // Vérifier si une URL de formulaire est spécifiée
+                            String formUrl = null;
+                            if (targetMethod.isAnnotationPresent(FormUrl.class)) {
+                                formUrl = targetMethod.getAnnotation(FormUrl.class).value();
+                            }
+                            
+                            // Si une URL de formulaire est spécifiée, rediriger vers celle-ci
+                            if (formUrl != null) {
+                                // Ajouter les erreurs de validation à la requête
+                                req.setAttribute("validationErrors", validationErrors);
+                                // Rediriger vers l'URL du formulaire
+                                req.getRequestDispatcher(formUrl).forward(req, res);
+                            } else {
+                                // Sinon, rediriger vers la page d'erreur par défaut
+                                req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
+                            }
                             return;
                         }
 
@@ -185,7 +198,20 @@ public class FrontController extends HttpServlet {
                 } catch (ValidationException ve) {
                     // Gérer les erreurs de validation
                     req.setAttribute("validationErrors", ve.getValidationErrors());
-                    req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
+                    
+                    // Vérifier si une URL de formulaire est spécifiée
+                    String formUrl = null;
+                    if (targetMethod.isAnnotationPresent(FormUrl.class)) {
+                        formUrl = targetMethod.getAnnotation(FormUrl.class).value();
+                    }
+                    
+                    // Si une URL de formulaire est spécifiée, rediriger vers celle-ci
+                    if (formUrl != null) {
+                        req.getRequestDispatcher(formUrl).forward(req, res);
+                    } else {
+                        // Sinon, rediriger vers la page d'erreur par défaut
+                        req.getRequestDispatcher("/WEB-INF/views/error.jsp").forward(req, res);
+                    }
                 }
             } else {
                 throw new Exception("Aucune méthode associée à ce chemin");
@@ -205,30 +231,21 @@ public class FrontController extends HttpServlet {
             if (parameter.isAnnotationPresent(RequestBody.class)) {
                 Class<?> parameterType = parameter.getType();
                 Object parameterObject = parameterType.getDeclaredConstructor().newInstance();
-                
-                // Remplir l'objet avec les paramètres de la requête
                 for (Field field : parameterType.getDeclaredFields()) {
                     String paramName = field.isAnnotationPresent(RequestParam.class)
                             ? field.getAnnotation(RequestParam.class).value()
                             : field.getName();
                     String paramValue = req.getParameter(paramName);
-                    if (paramValue != null && !paramValue.isEmpty()) {
+                    if (paramValue != null || paramValue != "") {
                         field.setAccessible(true);
                         field.set(parameterObject, convertParameter(paramValue, field.getType()));
                     }
+                    if(paramValue == null || paramValue == ""){
+                        throw new Exception("ETU002457//Missing required parameter: " + paramName);
+                    }
                 }
-                
-                // Valider l'objet
-                ValidationError validationErrors = Validator.validate(parameterObject);
-                if (validationErrors.hasErrors()) {
-                    // Si des erreurs sont présentes, les ajouter à la requête
-                    req.setAttribute("validationErrors", validationErrors);
-                    // Rediriger vers la page d'erreur
-                    throw new ValidationException("Erreurs de validation", validationErrors);
-                }
-                
                 args[i] = parameterObject;
-            } else if (parameter.getType() == MySession.class) {
+            } else if (parameter.getType().equals(MySession.class)) {
                 args[i] = new MySession(req.getSession());
             } else {
                 String paramName = null;
@@ -283,19 +300,5 @@ public class FrontController extends HttpServlet {
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         processRequest(req, res);
-    }
-
-    // Classe d'exception pour la validation
-    private static class ValidationException extends Exception {
-        private final ValidationError validationErrors;
-
-        public ValidationException(String message, ValidationError validationErrors) {
-            super(message);
-            this.validationErrors = validationErrors;
-        }
-
-        public ValidationError getValidationErrors() {
-            return validationErrors;
-        }
     }
 }
